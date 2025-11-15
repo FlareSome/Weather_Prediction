@@ -1,62 +1,54 @@
-# serial_reader.py
 import serial
-import time
 import json
-import csv
-from pathlib import Path
+import pandas as pd
+from datetime import datetime
 
-RAW_CSV = Path("raw_data.csv")
-SERIAL_PORT = "/dev/ttyUSB0"   # change to your port
-BAUDRATE = 115200
-RETRY_DELAY = 2.0
+CSV_FILE = "raw_data.csv"
 
-HEADERS = ["timestamp","temperature","humidity","pressure","altitude","rain_value","rain_digital"]
+# Ensure CSV has correct headers
+columns = [
+    "timestamp",
+    "temperature_c",
+    "humidity_perc",
+    "pressure_hpa",
+    "rainfall_mm",
+    "status"     # Dry/Wet
+]
 
-def ensure_csv():
-    if not RAW_CSV.exists():
-        with RAW_CSV.open("w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(HEADERS)
+# Create CSV if missing
+try:
+    df = pd.read_csv(CSV_FILE)
+except:
+    df = pd.DataFrame(columns=columns)
+    df.to_csv(CSV_FILE, index=False)
 
-def append_row(d):
-    row = [d.get(h, "") for h in HEADERS]
-    with RAW_CSV.open("a", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(row)
+print("Listening on /dev/ttyACM0 ...")
+ser = serial.Serial("/dev/ttyACM0", 115200)
 
-def main():
-    ensure_csv()
-    while True:
-        try:
-            with serial.Serial(SERIAL_PORT, BAUDRATE, timeout=5) as ser:
-                print("Connected to", SERIAL_PORT)
-                while True:
-                    line = ser.readline().decode(errors="ignore").strip()
-                    if not line:
-                        continue
-                    # ignore human readable lines, try parse JSON
-                    try:
-                        j = json.loads(line)
-                        # ensure keys: convert types
-                        record = {
-                            "timestamp": int(j.get("timestamp", time.time())),
-                            "temperature": float(j.get("temperature", 0.0)),
-                            "humidity": float(j.get("humidity", 0.0)),
-                            "pressure": float(j.get("pressure", 1013.25)),
-                            "altitude": float(j.get("altitude", 0.0)),
-                            "rain_value": int(j.get("rain_value", 0)),
-                            "rain_digital": int(j.get("rain_digital", 1))
-                        }
-                        append_row(record)
-                        print("Appended:", record)
-                    except json.JSONDecodeError:
-                        # optional: print non-json for debugging
-                        print("non-json:", line)
-                    except Exception as e:
-                        print("parse error:", e, "line:", line)
-        except serial.SerialException as e:
-            print("Serial error:", e)
-            time.sleep(RETRY_DELAY)
+while True:
+    try:
+        line = ser.readline().decode().strip()
+        if not line.startswith("{"):
+            continue
 
-if __name__ == "__main__":
-    main()
+        data = json.loads(line)
+
+        # Convert Arduino fields → CSV fields
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "temperature_c": float(data.get("temperature", 0)),
+            "humidity_perc": float(data.get("humidity", 0)),
+            "pressure_hpa": float(data.get("pressure", 0)),
+            "rainfall_mm": float(data.get("rain_value", 0) / 10.0),  # simple scaling
+            "status": "Dry" if data.get("rain_digital", 1) == 1 else "Wet"
+        }
+
+        # Append to CSV
+        df = pd.read_csv(CSV_FILE)
+        df = pd.concat([df, pd.DataFrame([entry])], ignore_index=True)
+        df.to_csv(CSV_FILE, index=False)
+
+        print("Saved:", entry)
+
+    except Exception as e:
+        print("Error:", e)

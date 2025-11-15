@@ -1,66 +1,57 @@
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.model_selection import train_test_split
 import joblib
+import os
 
-def train_model():
+DATA_FILE = "raw_data.csv"
+MODEL_FILE = "ml_weather_model.pkl"
 
-    df = pd.read_csv("raw_data.csv")
+print("Loading dataset:", DATA_FILE)
 
-    # Print columns so user can see actual names
-    print("Detected CSV Columns:", list(df.columns))
+if not os.path.exists(DATA_FILE):
+    print("ERROR: CSV file not found!")
+    exit()
 
-    # Try to auto-map column names (fixes your error)
-    col_map = {
-        "temperature": ["temperature", "temperature_c", "temp"],
-        "humidity": ["humidity", "humidity_perc", "hum"],
-        "pressure": ["pressure", "pressure_hpa"],
-        "rain_value": ["rain_value", "rainfall_mm", "rain"],
-    }
+df = pd.read_csv(DATA_FILE)
 
-    def find_col(possible_names):
-        for name in possible_names:
-            if name in df.columns:
-                return name
-        raise KeyError(f"None of these columns were found: {possible_names}")
+if df.empty:
+    print("ERROR: CSV file is EMPTY!")
+    exit()
 
-    temp_col = find_col(col_map["temperature"])
-    hum_col = find_col(col_map["humidity"])
-    pres_col = find_col(col_map["pressure"])
-    rain_col = find_col(col_map["rain_value"])
+# Convert timestamp to datetime
+df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+df = df.dropna(subset=["timestamp"])
 
-    # Map to unified names
-    df = df.rename(columns={
-        temp_col: "temperature",
-        hum_col: "humidity",
-        pres_col: "pressure",
-        rain_col: "rain_value",
-    })
+# Required numeric columns
+required_cols = ["temperature_c", "humidity_perc", "pressure_hpa", "rainfall_mm"]
 
-    # Convert timestamp
-    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s")
-    df = df.sort_values("timestamp")
+for c in required_cols:
+    df[c] = pd.to_numeric(df[c], errors="coerce")
 
-    # Feature engineering
-    df["hour"] = df["timestamp"].dt.hour
-    df["dayofyear"] = df["timestamp"].dt.dayofyear
+df = df.dropna(subset=required_cols)
 
-    features = ["temperature", "humidity", "pressure", "rain_value", "hour", "dayofyear"]
-    target = "temperature"
+# Create time-based features
+df["hour"] = df["timestamp"].dt.hour
+df["dayofyear"] = df["timestamp"].dt.dayofyear
 
-    X = df[features]
-    y = df[target]
+FEATURES = ["temperature_c", "humidity_perc", "pressure_hpa", "rainfall_mm", "hour", "dayofyear"]
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, shuffle=False
-    )
+print("Training with features:", FEATURES)
 
-    model = RandomForestRegressor(n_estimators=200)
-    model.fit(X_train, y_train)
+X = df[FEATURES]
+y = df["temperature_c"]     # Predict future temperature from past temperature
 
-    joblib.dump(model, "temp_forecast_model.pkl")
-    print("Model saved: temp_forecast_model.pkl")
+model = RandomForestRegressor(
+    n_estimators=400,
+    random_state=42,
+    n_jobs=-1
+)
 
-if __name__ == "__main__":
-    train_model()
+model.fit(X, y)
+
+joblib.dump(model, MODEL_FILE)
+
+print("\n🎉 Model training complete!")
+print("Saved model to:", MODEL_FILE)
+print("\nModel expects features:", list(model.feature_names_in_))

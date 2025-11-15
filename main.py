@@ -1,284 +1,168 @@
+# main.py — Live Streamlit dashboard with auto-train fallback
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
-import altair as alt
-import time
 import numpy as np
+import joblib
+import os
+import time
+from datetime import datetime, timedelta
 
-from utils.theme_manager import load_css, inject_theme_toggle
-from iot_data_processor import get_sensor_data
-from gemini_forecast import get_gemini_forecast
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split
 
-current_theme = st.session_state.get("theme", "light")
-load_css(current_theme)
-inject_theme_toggle()
+# ---------- CONFIG ----------
+CSV_PATH = "raw_data.csv"
+MODEL_PATH = "trained_weather_model.pkl"
+AUTO_REFRESH_SECONDS = 5
+MIN_ROWS_TO_TRAIN = 30   # require at least this many rows to auto-train
 
-# =============================
-# 🧠 Streamlit App Configuration
-# =============================
-st.set_page_config(
-    page_title="AeroSync - Smart Weather Prediction System",
-    page_icon="🌦️",
-    layout="wide",
-)
+st.set_page_config(page_title="Smart Weather Dashboard", layout="wide")
+st.title("🌦 Smart Weather Dashboard (Live IoT + ML)")
+st.write("Automatically updating every few seconds...")
 
-
-# =============================
-# 🌦️ AeroSync Header
-# =============================
-st.markdown("""
-<div style="
-    font-size: 42px;
-    font-weight: 800;
-    margin-top: 10px;
-    margin-bottom: 20px;
-">
-🌦️ <span style="color:#007BFF;">AeroSync</span> — Smart Weather Prediction using <b>IoT</b> & <b>ML</b>
-</div>
-""", unsafe_allow_html=True)
-
-
-
-# =============================
-# 🔁 Data Loading & Caching
-# =============================
-def load_real_sensor_data(hours=24):
-    df = pd.read_csv("raw_data.csv")
-
-    # Convert timestamp to datetime
-    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s")
-
-    # Filter last X hours
-    cutoff = datetime.now() - timedelta(hours=hours)
-    df = df[df["timestamp"] >= cutoff]
-
-    # Rename to match your Streamlit code
-    df = df.rename(columns={
-        "temperature": "temperature_c",
-        "humidity": "humidity_perc",
-        "pressure": "pressure_hpa",
-        "rain_value": "rainfall_mm",
-    })
-
+# ---------- Helper functions ----------
+def safe_load_csv(path: str) -> pd.DataFrame:
+    if not os.path.exists(path):
+        return pd.DataFrame()
+    df = pd.read_csv(path)
+    if df.empty:
+        return df
+    # convert types and drop bad rows
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    for col in ["temperature_c", "humidity_perc", "pressure_hpa", "rainfall_mm"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    df = df.dropna(subset=["timestamp", "temperature_c", "humidity_perc", "pressure_hpa", "rainfall_mm"])
+    df = df.sort_values("timestamp").reset_index(drop=True)
     return df
 
-@st.cache_data(ttl=60)
+def prepare_training_df(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Create features and target. Target is next-row temperature (next sample's temperature)
+    We'll compute simple features from each row and shift -1 to be the target.
+    """
+    t = df.copy()
+    # add day-of-year for seasonality
+    t["dayofyear"] = t["timestamp"].dt.dayofyear
+    # features we will use
+    features = ["temperature_c", "humidity_perc", "pressure_hpa", "rainfall_mm", "dayofyear"]
+    # target is next sample's temperature (shifted up)
+    t["target_next_temp"] = t["temperature_c"].shift(-1)
+    t = t.dropna(subset=features + ["target_next_temp"])
+    return t, features, "target_next_temp"
 
-def load_all_data():
-    df = load_real_sensor_data(hours=24)
-    latest = df.iloc[-1]
-    forecast_data, ai_summary = get_gemini_forecast(latest)
-    forecast_df = pd.DataFrame(forecast_data)
-    return df, forecast_df, ai_summary, latest
+def train_and_save_model(df: pd.DataFrame, model_path: str) -> object:
+    t, features, target = prepare_training_df(df)
+    if len(t) < MIN_ROWS_TO_TRAIN:
+        raise ValueError(f"Not enough rows to train: {len(t)} < {MIN_ROWS_TO_TRAIN}")
+    X = t[features]
+    y = t[target]
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    model = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
+    model.fit(X_train, y_train)
+    # save
+    joblib.dump({"model": model, "features": features}, model_path)
+    return {"model": model, "features": features}
 
+def load_model_or_train(df: pd.DataFrame, model_path: str):
+    # Try load
+    if os.path.exists(model_path):
+        try:
+            payload = joblib.load(model_path)
+            # payload should be dict {"model":..., "features":[...]}
+            if isinstance(payload, dict) and "model" in payload and "features" in payload:
+                return payload
+        except Exception as e:
+            st.warning(f"Failed to load existing model: {e}. Will attempt retrain.")
+    # If reach here, attempt training if enough data
+    try:
+        payload = train_and_save_model(df, model_path)
+        st.success("Trained new ML model from CSV and saved to disk.")
+        return payload
+    except Exception as e:
+        st.error(f"No ML model available and training failed: {e}")
+        return None
 
-df, forecast_df, ai_summary, latest = load_all_data()
+def make_7day_forecast(model_payload, latest_row):
+    """
+    Build 7 rows of inputs using latest reading as baseline.
+    The model expects exact feature names present in model_payload['features'].
+    """
+    features = model_payload["features"]
+    model = model_payload["model"]
 
-# Timestamp fix
-if isinstance(latest["timestamp"], str):
-    latest_time = pd.to_datetime(latest["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
-else:
-    latest_time = latest["timestamp"].strftime("%Y-%m-%d %H:%M:%S")
+    # build future dataframe
+    base_day = int(latest_row["timestamp"].dayofyear)
+    inputs = []
+    for i in range(1, 8):
+        di = {}
+        # map feature names: if dayofyear present compute, else set reasonable guess
+        for f in features:
+            if f == "dayofyear":
+                di[f] = base_day + i
+            elif f == "temperature_c":
+                di[f] = latest_row["temperature_c"]
+            elif f == "humidity_perc":
+                di[f] = latest_row["humidity_perc"]
+            elif f == "pressure_hpa":
+                di[f] = latest_row["pressure_hpa"]
+            elif f == "rainfall_mm":
+                di[f] = latest_row["rainfall_mm"]
+            else:
+                # unknown feature: try to find in latest_row or set 0
+                di[f] = latest_row.get(f, 0)
+        inputs.append(di)
+    X_future = pd.DataFrame(inputs)[features]
+    preds = model.predict(X_future)
+    return preds
 
+# ---------- Load data ----------
+df = safe_load_csv(CSV_PATH)
+if df.empty:
+    st.warning("⏳ Waiting for sensor data (raw_data.csv is missing or empty). Start serial_reader.py and wait a few readings.")
+    # place auto-refresh at end
+    st.toast(f"🔄 Auto-refresh in {AUTO_REFRESH_SECONDS}s...")
+    time.sleep(AUTO_REFRESH_SECONDS)
+    st.rerun()
 
-# =============================
-# 🧭 Navigation Tabs
-# =============================
-tab = st.tabs(["📊 Dashboard", "📈 Analytics", "☁️ Forecast", "⚙️ Model Insights"])
+# ---------- Show latest reading ----------
+latest = df.iloc[-1]
+st.subheader("📡 Latest IoT Sensor Reading")
+col1, col2, col3 = st.columns(3)
+col1.metric("🌡 Temperature (°C)", f"{latest['temperature_c']:.1f}")
+col2.metric("💧 Humidity (%)", f"{latest['humidity_perc']:.1f}")
+col3.metric("📊 Pressure (hPa)", f"{latest['pressure_hpa']:.2f}")
 
+col4, col5 = st.columns(2)
+col4.metric("🌧 Rain Value", f"{latest['rainfall_mm']:.1f}")
+col5.metric("Status", latest.get("status", "N/A"))
 
+st.divider()
 
-# =============================
-# 📊 DASHBOARD TAB
-# =============================
-with tab[0]:
-    st.title("📊 Smart Weather Monitoring Dashboard")
-    st.caption(f"Last Update: {latest_time} | Data Source: IoT Sensor Station")
+# ---------- Load or train model ----------
+model_payload = load_model_or_train(df, MODEL_PATH)
 
-    st.subheader("🔹 Real-Time Sensor Monitoring")
+if model_payload is None:
+    st.warning("ML model not available. Dashboard will still show live sensor data. Fix CSV/model to enable forecasts.")
+    # auto-refresh and stop here
+    st.toast(f"🔄 Auto-refresh in {AUTO_REFRESH_SECONDS}s...")
+    time.sleep(AUTO_REFRESH_SECONDS)
+    st.rerun()
 
-    col1, col2, col3, col4 = st.columns(4)
+# ---------- Forecast ----------
+try:
+    preds = make_7day_forecast(model_payload, latest)
+    forecast_df = pd.DataFrame({
+        "Day": [ (latest["timestamp"] + pd.to_timedelta(i, unit="D")).strftime("%Y-%m-%d") for i in range(1,8) ],
+        "Predicted Temp (°C)": np.round(preds, 2)
+    })
+    st.subheader("📅 7-Day Forecast (ML prediction of next-day temperature)")
+    st.dataframe(forecast_df, use_container_width=True)
+    st.line_chart(forecast_df.set_index("Day")["Predicted Temp (°C)"])
+except Exception as e:
+    st.error(f"Failed to compute forecast: {e}")
 
-    col1.metric("Temperature (°C)", f"{latest['temperature_c']:.1f}",
-                f"{latest['temperature_c'] - df.iloc[-2]['temperature_c']:.1f}°C")
-
-    col2.metric("Humidity (%)", f"{latest['humidity_perc']:.1f}",
-                f"{latest['humidity_perc'] - df.iloc[-2]['humidity_perc']:.1f}%")
-
-    col3.metric("Pressure (hPa)", f"{latest['pressure_hpa']:.1f}",
-                f"{latest['pressure_hpa'] - df.iloc[-2]['pressure_hpa']:.1f} hPa")
-
-    col4.metric("Rainfall (mm/5min)", f"{latest['rainfall_mm']:.1f}",
-                "High" if latest["rainfall_mm"] > 1 else "Low/None")
-
-    st.markdown("---")
-
-    # ------ Trend Chart ------
-    st.subheader("📈 24-Hour Environmental Trends")
-
-    plot_data = (
-        df.set_index("timestamp").resample("H").mean(numeric_only=True)
-        .dropna().reset_index()
-    )
-
-    plot_long = plot_data.melt(
-        id_vars=["timestamp"],
-        value_vars=["temperature_c", "humidity_perc", "pressure_hpa"],
-        var_name="Parameter",
-        value_name="Value",
-    )
-
-    color_scale = alt.Scale(
-        domain=["temperature_c", "humidity_perc", "pressure_hpa"],
-        range=["#FF6347", "#1E90FF", "#3CB371"],
-    )
-
-    line_chart = (
-        alt.Chart(plot_long)
-        .mark_line(point=True)
-        .encode(
-            x="timestamp:T",
-            y="Value:Q",
-            color=alt.Color("Parameter:N", scale=color_scale),
-            tooltip=["timestamp:T", "Parameter:N", "Value:Q"],
-        )
-        .interactive()
-        .properties(height=350)
-    )
-
-    st.altair_chart(line_chart, use_container_width=True)
-
-    st.markdown("---")
-
-    # ------ Rainfall Chart ------
-    st.subheader("🌧️ Rainfall Over Time")
-
-    rainfall_chart = (
-        alt.Chart(df)
-        .mark_area(opacity=0.6, color="#1E90FF")
-        .encode(
-            x="timestamp:T",
-            y="rainfall_mm:Q",
-            tooltip=["timestamp:T", "rainfall_mm:Q"],
-        )
-        .properties(height=250)
-    )
-
-    st.altair_chart(rainfall_chart, use_container_width=True)
-
-
-
-# =============================
-# 📈 ANALYTICS TAB
-# =============================
-with tab[1]:
-    st.header("📊 Environmental Analytics")
-
-    st.subheader("🔸 Sensor Correlation Matrix")
-    corr = df[["temperature_c", "humidity_perc", "pressure_hpa", "rainfall_mm"]].corr()
-    st.dataframe(corr.style.background_gradient(cmap="coolwarm").format("{:.2f}"))
-
-    st.subheader("🌡️ Temperature Distribution")
-    hist_chart = (
-        alt.Chart(df)
-        .mark_bar(opacity=0.7, color="#FF6347")
-        .encode(
-            alt.X(
-                "temperature_c:Q",
-                bin=alt.Bin(maxbins=30),
-                title="Temperature (°C)"   # 👈 FIXED TITLE
-            ),
-            alt.Y(
-                "count()",
-                title="Frequency"          # 👈 OPTIONAL FIX
-            ),
-        )
-        .properties(height=300)
-    )
-
-    st.altair_chart(hist_chart, use_container_width=True)
-
-
-
-# =============================
-# ☁️ FORECAST TAB
-# =============================
-with tab[2]:
-    st.header("📅 7-Day AI Weather Forecast")
-    st.markdown(f"**AI Insight:** {ai_summary}")
-
-    icon_map = {
-        "Sunny": "☀️",
-        "Partly Cloudy": "🌤️",
-        "Heavy Showers": "🌧️",
-        "Thunderstorms": "⛈️",
-        "Cloudy": "☁️",
-        "Mostly Sunny": "🌥️",
-        "Warm and Clear": "🔥",
-    }
-
-    cols = st.columns(7)
-
-    for i, row in forecast_df.iterrows():
-        with cols[i]:
-            day = (datetime.now() + timedelta(days=i)).strftime("%a")
-            icon = icon_map.get(row["condition"], "❓")
-
-            st.markdown(f"""
-                <div class="stCard" style="text-align:center; padding:15px;">
-                    <h3 style="color:#007BFF;">{day}</h3>
-                    <p style="font-size:2rem;">{icon}</p>
-                    <p><b>{row['temp_high_c']}° / {row['temp_low_c']}°</b></p>
-                    <p style="color:#6c757d;">{row['condition']}</p>
-                    <p style="color:#3CB371;">🌧️ {row['rain_prob_perc']}% Rain</p>
-                </div>
-            """, unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    # --- Graph for next 7 days ---
-    st.subheader("📊 Temperature Trend (7 Days)")
-
-    forecast_chart = (
-        alt.Chart(forecast_df.reset_index())
-        .mark_line(point=True, color="#FF6347")
-        .encode(
-            x=alt.X("index:O", title="Days Ahead"),
-            y=alt.Y("temp_high_c:Q", title="Temperature (°C)"),
-            tooltip=[
-                alt.Tooltip("temp_high_c:Q", title="High"),
-                alt.Tooltip("temp_low_c:Q", title="Low"),
-                alt.Tooltip("condition:N", title="Condition"),
-            ],
-        )
-        .properties(height=300)
-    )
-
-    st.altair_chart(forecast_chart, use_container_width=True)
-
-
-
-
-# =============================
-# ⚙️ MODEL INSIGHTS TAB
-# =============================
-with tab[3]:
-    st.header("⚙️ Model Performance Evaluation")
-
-    col1, col2 = st.columns(2)
-    col1.metric("7-Day Forecast Accuracy", "92.5%", "+0.3%")
-    col2.metric("Avg. Temp Deviation", "±1.2°C", "-0.3°C")
-
-    st.info("Model performance is based on AI-driven predictive analytics.")
-
-
-
-# =============================
-# 🔄 Auto Refresh
-# =============================
-st.caption(
-    f"Dashboard auto-refreshes every 60 seconds ⏱️ | Next update: {datetime.now() + timedelta(seconds=60):%H:%M:%S}"
-)
-
-time.sleep(60)
+# ---------- Footer / auto-refresh ----------
+st.info(f"Dashboard auto-refreshes every {AUTO_REFRESH_SECONDS} seconds.")
+time.sleep(AUTO_REFRESH_SECONDS)
 st.rerun()
