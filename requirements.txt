@@ -1,0 +1,8 @@
+streamlit
+pandas
+numpy
+scikit-learn
+joblib
+pyserial
+plotly
+adafruit-circuitpython-bmp280

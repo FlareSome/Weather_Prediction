@@ -1,0 +1,17 @@
+html[data-theme="light"] body,
+html[data-theme="light"] {
+    background-color: #ffffff !important;
+    color: #000 !important;
+}
+
+html[data-theme="light"] h1,
+html[data-theme="light"] h2,
+html[data-theme="light"] h3 {
+    color: #007BFF !important;
+}
+
+html[data-theme="light"] .stCard {
+    background-color: #f8f9fa !important;
+    border-radius: 10px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+}
