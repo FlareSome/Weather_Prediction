@@ -1,4 +1,3 @@
-streamlit
 pandas
 numpy
 scikit-learn
@@ -6,3 +5,8 @@ joblib
 pyserial
 plotly
 adafruit-circuitpython-bmp280
+python-dotenv
+fastapi
+uvicorn[standard]
+nicegui
+requests

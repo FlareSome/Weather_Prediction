@@ -1,50 +1,88 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-# Trap Ctrl+C to clean up all background processes
-trap 'echo "Shutting down..."; kill $(jobs -p) 2>/dev/null; exit 0' SIGINT
+# ======================================================
+# WeatherProject - Unified Launcher (Hybrid UI Edition)
+# FastAPI (main.py)
+# NiceGUI (ui/ui.py)
+# Serial Reader (serial/serial_reader.py)
+# ======================================================
 
-echo "🔧 Setting up environment..."
-echo ""
+set -e
 
-# Check if venv exists, if not create it
-if [ ! -d "venv" ]; then
-    echo "📦 Creating virtual environment..."
-    python3 -m venv venv
+echo "🚀 Starting WeatherProject..."
+
+# ------------------------------------------------------
+# 1) Determine base dir
+# ------------------------------------------------------
+BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$BASE_DIR"
+
+# ------------------------------------------------------
+# 2) Activate virtual environment
+# ------------------------------------------------------
+if [ -d "venv" ]; then
+    echo "🔧 Activating virtual environment..."
+    source venv/bin/activate
+else
+    echo "❌ venv not found! Create one with:"
+    echo "python3 -m venv venv"
+    exit 1
 fi
 
-# Activate virtual environment
-echo "✅ Activating virtual environment..."
-source venv/bin/activate
+# ------------------------------------------------------
+# 3) Load environment variables
+# ------------------------------------------------------
+export API_BASE="http://localhost:8000"
 
-# Install requirements
-echo "📥 Installing requirements..."
-pip install -r requirements.txt --quiet
+if [ -f ".env" ]; then
+    echo "🔐 Loading .env variables..."
+    export $(grep -v '^#' .env | xargs)
+fi
 
-echo ""
-echo "Starting Weather Prediction Pipeline..."
-echo ""
+mkdir -p logs
 
-# Run serial_reader.py
-echo "1️⃣  Starting serial_reader.py..."
-python serial_reader.py &
+# ------------------------------------------------------
+# 4) Start Serial Reader
+# ------------------------------------------------------
+echo "📡 Starting serial/serial_reader.py..."
+python serial/serial_reader.py > logs/serial.log 2>&1 &
 SERIAL_PID=$!
-sleep 2
+echo "✔ serial_reader running (PID: $SERIAL_PID)"
 
-# Run train_ml_model.py
-echo "2️⃣  Starting train_ml_model.py..."
-python train_ml_model.py &
-TRAIN_PID=$!
-sleep 2
+# ------------------------------------------------------
+# 5) Start FastAPI backend (main.py)
+# ------------------------------------------------------
+echo "⚙️ Starting FastAPI backend (main.py)..."
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload > logs/api.log 2>&1 &
+API_PID=$!
+echo "✔ FastAPI backend running (PID: $API_PID)"
 
-# Run streamlit app
-echo "3️⃣  Starting Streamlit app..."
-streamlit run main.py &
-STREAMLIT_PID=$!
+# ------------------------------------------------------
+# 6) Start NiceGUI UI (ui/ui.py)
+# ------------------------------------------------------
+echo "🌐 Starting NiceGUI UI (ui/ui.py)..."
+python ui/ui.py > logs/ui.log 2>&1 &
+UI_PID=$!
+echo "✔ NiceGUI UI running (PID: $UI_PID)"
 
+# ------------------------------------------------------
+# 7) Final Message
+# ------------------------------------------------------
 echo ""
-echo "✅ All services started!"
-echo "Press Ctrl+C to stop everything..."
+echo "🚀 WeatherProject is LIVE!"
+echo "----------------------------------------"
+echo "🔗 FastAPI Backend: http://localhost:8000"
+echo "🔗 NiceGUI Frontend: http://localhost:8080"
+echo "🛰️  Serial Reader: Running in background"
+echo "----------------------------------------"
+echo "📄 Logs located in ./logs/"
+echo ""
+echo "Press CTRL+C to stop everything"
 echo ""
 
-# Wait for all background processes
+# ------------------------------------------------------
+# 8) Handle shutdown
+# ------------------------------------------------------
+trap "echo '🛑 Stopping services...'; kill $SERIAL_PID $API_PID $UI_PID; exit 0" SIGINT
+
 wait

@@ -1,4 +1,4 @@
-#!/home/flaresome/git/app/venv/bin/python3
+#!/home/flaresome/cursorProjects/app2/venv/bin/python3.12
 
 """Simple FTDI EEPROM configurator.
 """

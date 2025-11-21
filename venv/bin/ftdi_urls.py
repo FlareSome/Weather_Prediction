@@ -1,4 +1,4 @@
-#!/home/flaresome/git/app/venv/bin/python3
+#!/home/flaresome/cursorProjects/app2/venv/bin/python3.12
 
 # Copyright (c) 2019-2024, Emmanuel Blot <emmanuel.blot@free.fr>
 # All rights reserved.
