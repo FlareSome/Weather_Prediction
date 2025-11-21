@@ -1,55 +1,118 @@
-# Weather Prediction System
+# Weather Prediction System 🌤️
 
-A comprehensive IoT-based weather prediction system that collects real-time sensor data, trains machine learning models, and provides forecasts through an interactive Streamlit dashboard.
+A comprehensive IoT-based weather prediction system that collects real-time sensor data, integrates with WeatherAPI, trains machine learning models, and provides forecasts through an interactive NiceGUI dashboard with beautiful visualizations.
 
 ## 🌟 Features
 
-- **Real-time Data Collection**: Serial reader for IoT weather station sensors
-- **Machine Learning**: Random Forest model for temperature prediction
-- **Data Processing**: ETL pipeline for weather data
-- **Interactive Dashboard**: Streamlit-based UI for visualization and forecasting
-- **Gemini AI Integration**: Advanced weather forecasting with Google's Gemini API
-- **Cross-platform**: Windows (.bat) and Linux/Mac (.sh) support
+### Data Collection & Integration
+- **Real-time IoT Sensor Data**: Serial reader for ESP32/Arduino weather station sensors
+- **WeatherAPI Integration**: Fetches current weather and 7-day forecasts
+- **Automatic Fallback**: Falls back to WeatherAPI when IoT sensor is disconnected (30-min freshness check)
+- **Database Storage**: SQLite database for historical data and forecasts
+
+### Machine Learning
+- **Random Forest Model**: Temperature prediction based on historical data
+- **7-Day ML Forecast**: AI-powered predictions for temperature trends
+- **Automated Training**: Train models on collected sensor data
+
+### Interactive Dashboard
+- **NiceGUI Interface**: Modern, responsive web UI with glassmorphism design
+- **Dark/Light Theme**: Toggle between themes with persistent preferences
+- **Real-time Updates**: Live sensor status indicator (Connected/Disconnected)
+- **Beautiful Charts**: Interactive Plotly visualizations for trends
+- **7-Day Forecast**: Combined WeatherAPI + ML predictions
+
+### Visualizations
+- **Temperature Trend**: AI predictions vs API bounds (filled area chart)
+- **Humidity Trend**: Historical humidity data (7 days)
+- **Pressure Trend**: Atmospheric pressure trends
+- **Rainfall Chart**: Daily rainfall bar chart
+- **All charts support light/dark themes**
+
+### API Features
+- **FastAPI Backend**: RESTful API for all data operations
+- **Combined Endpoint**: Merges IoT, WeatherAPI, and ML data
+- **Manual Sync**: "Sync WeatherAPI" button to fetch and store forecasts
+- **ML Trigger**: "Trigger ML Forecast" button for on-demand predictions
 
 ## 📋 Project Structure
 
 ```
-app/
-├── main.py                 # Streamlit dashboard application
-├── serial_reader.py        # IoT sensor data collection
-├── train_ml_model.py       # ML model training pipeline
-├── data_handler.py         # Data processing utilities
-├── iot_data_processor.py   # IoT data processing
-├── gemini_forecast.py      # Gemini API integration
-├── weather_station.ino     # Arduino firmware
-├── assets/                 # UI themes (light/dark)
-├── utils/                  # Utility modules
-├── requirements.txt        # Python dependencies
-├── run.sh                  # Linux/Mac startup script
-├── run.bat                 # Windows startup script
-└── README.md               # This file
+app2/
+├── main.py                     # FastAPI + NiceGUI application entry point
+├── api/
+│   ├── combined.py             # Combined weather data endpoint
+│   ├── latest_sensor.py        # Latest IoT sensor reading
+│   ├── weather_api.py          # WeatherAPI integration
+│   ├── ml_forecast.py          # ML prediction endpoint
+│   ├── gemini_forecast.py      # Gemini AI integration
+│   └── train_ml_model.py       # ML model training pipeline
+├── ui/
+│   └── ui.py                   # NiceGUI dashboard interface
+├── db/
+│   └── db.py                   # Database operations (SQLite)
+├── serial/
+│   └── serial_reader.py        # IoT sensor data collection
+├── utils/
+│   └── theme_manager.py        # Dark/light theme management
+├── services/
+│   ├── condition_map.py        # Weather condition mapping
+│   ├── merger.py               # Data merging utilities
+│   └── utils.py                # Helper functions
+├── core/
+│   └── config.py               # Configuration management
+├── hardware/
+│   └── weather_station.ino     # Arduino/ESP32 firmware
+├── assets/
+│   └── themes/                 # UI theme definitions
+├── requirements.txt            # Python dependencies
+├── run.sh                      # Linux/Mac startup script
+├── run.bat                     # Windows startup script
+└── README.md                   # This file
 ```
 
 ## 🛠️ Tech Stack
 
-- **Backend**: Python 3.x
-- **Data Science**: Pandas, NumPy, Scikit-learn
-- **Frontend**: Streamlit
-- **Visualization**: Plotly
-- **Hardware**: Arduino (IoT Weather Station)
-- **API**: Google Gemini API
-- **Database**: CSV-based (expandable to SQL)
+### Backend
+- **Python 3.12+**
+- **FastAPI**: Modern web framework for APIs
+- **NiceGUI**: Python-based web UI framework
+- **SQLite**: Lightweight database
+
+### Data Science
+- **Pandas**: Data manipulation
+- **NumPy**: Numerical computing
+- **Scikit-learn**: Machine learning
+- **Joblib**: Model persistence
+
+### Visualization
+- **Plotly**: Interactive charts
+
+### Hardware
+- **ESP32/Arduino**: IoT weather station
+- **BMP280**: Temperature, humidity, pressure sensor
+- **Rain Gauge**: GPIO-based rainfall detection
+
+### External APIs
+- **WeatherAPI**: Current weather and forecasts
+- **Google Gemini API**: Advanced AI forecasting
 
 ## 📦 Dependencies
 
-- `streamlit` - Web UI framework
-- `pandas` - Data manipulation
-- `numpy` - Numerical computing
-- `scikit-learn` - Machine learning
-- `joblib` - Model persistence
-- `pyserial` - Serial communication
-- `plotly` - Interactive visualizations
-- `adafruit-circuitpython-bmp280` - Sensor library
+```
+pandas
+numpy
+scikit-learn
+joblib
+pyserial
+plotly
+adafruit-circuitpython-bmp280
+python-dotenv
+fastapi
+uvicorn[standard]
+nicegui
+requests
+```
 
 See `requirements.txt` for complete list.
 
@@ -68,6 +131,13 @@ chmod +x run.sh
 run.bat
 ```
 
+The script will:
+1. Create virtual environment (if needed)
+2. Install dependencies
+3. Start serial reader (background)
+4. Start FastAPI + NiceGUI server
+5. Open dashboard in browser at `http://localhost:8000`
+
 ### Option 2: Manual Setup
 
 1. **Create and activate virtual environment:**
@@ -83,62 +153,144 @@ run.bat
    pip install -r requirements.txt
    ```
 
-3. **Run components individually:**
-   ```bash
-   python serial_reader.py    # Start sensor reader
-   python train_ml_model.py   # Train ML model
-   streamlit run main.py      # Start dashboard
+3. **Set up environment variables:**
+   Create a `.env` file:
    ```
+   WEATHERAPI_KEY=your_api_key_here
+   CITY_NAME=New Town, West Bengal
+   API_BASE=http://localhost:8000
+   ```
+
+4. **Run components:**
+   ```bash
+   # Start serial reader (optional, for IoT sensor)
+   python serial/serial_reader.py &
+   
+   # Start main application
+   python main.py
+   ```
+
+5. **Access dashboard:**
+   Open browser to `http://localhost:8000`
 
 ## 📡 Hardware Setup
 
-### Arduino Weather Station
-- Upload `weather_station.ino` to your Arduino board
-- Connect BMP280 sensor for temperature, humidity, and pressure readings
-- Configure serial port in `serial_reader.py`
+### ESP32/Arduino Weather Station
+
+1. **Upload firmware:**
+   - Open `hardware/weather_station.ino` in Arduino IDE
+   - Select your board (ESP32/Arduino)
+   - Upload to device
+
+2. **Connect sensors:**
+   - **BMP280**: I2C connection (SDA, SCL)
+   - **Rain Gauge**: GPIO pin (configurable)
+
+3. **Configure serial port:**
+   Update `.env` or `serial/serial_reader.py`:
+   ```python
+   SERIAL_PORT = "/dev/ttyUSB0"  # Linux/Mac
+   # or
+   SERIAL_PORT = "COM3"  # Windows
+   ```
 
 ### Supported Sensors
-- **Temperature**: BMP280
-- **Humidity**: BMP280
-- **Pressure**: BMP280
-- **Rainfall**: GPIO-based rain gauge
+- **Temperature**: BMP280 (°C)
+- **Humidity**: BMP280 (%)
+- **Pressure**: BMP280 (hPa)
+- **Rainfall**: GPIO-based rain gauge (mm)
 
 ## 🤖 Machine Learning
 
-The system uses a **Random Forest Regressor** to predict temperature based on:
-- Historical temperature
-- Humidity percentage
-- Atmospheric pressure
-- Rainfall
-- Time features (hour, day of year)
+### Model Details
+- **Algorithm**: Random Forest Regressor
+- **Features**:
+  - Historical temperature
+  - Humidity percentage
+  - Atmospheric pressure
+  - Rainfall
+  - Time features (hour, day of year)
+  - Rolling averages
 
 ### Training
 ```bash
-python train_ml_model.py
+python api/train_ml_model.py
 ```
 
-Model is saved to `ml_weather_model.pkl` for later predictions.
+Model is saved to `ml_weather_model.pkl` for predictions.
 
-## 📊 Data Files
+### Prediction
+- Automatic: Via `/api/ml_forecast` endpoint
+- Manual: Click "Trigger ML Forecast" button in dashboard
 
-- `raw_data.csv` - Raw sensor data
-- `forecast_log.csv` - Prediction history
-- `ml_weather_model.pkl` - Trained ML model (generated)
+## 📊 Data Flow
+
+1. **IoT Sensor** → Serial Reader → SQLite Database
+2. **WeatherAPI** → Sync Endpoint → SQLite Database
+3. **ML Model** → Training Script → `ml_weather_model.pkl`
+4. **Combined API** → Merges IoT + WeatherAPI + ML → Dashboard
+5. **Dashboard** → Displays charts, forecasts, current conditions
+
+## 🎨 Dashboard Features
+
+### Main Sections
+
+1. **Hero Card** (Top-left)
+   - Current temperature (large display)
+   - Weather condition with emoji
+   - Rainfall, Humidity, Wind (bottom row)
+
+2. **Detail Cards** (Top-right, 2x2 grid)
+   - Feels Like temperature
+   - Atmospheric Pressure
+   - Sunrise time
+   - Sunset time
+
+3. **7-Day Forecast** (Middle)
+   - Day name, date, emoji, high/low temps
+   - Merged WeatherAPI + ML predictions
+   - Action buttons: "Trigger ML Forecast", "Sync WeatherAPI"
+
+4. **Trend Charts** (Bottom, 2x2 grid)
+   - **Temperature**: AI prediction vs API bounds
+   - **Humidity**: 7-day trend
+   - **Pressure**: 7-day trend
+   - **Rainfall**: Daily totals (bar chart)
+
+### Theme Toggle
+- Click moon icon in header to switch between dark/light modes
+- Preference persists across sessions
+
+### IoT Status
+- **Connected** (green): Sensor data is fresh (<30 min old)
+- **Disconnected** (red): Sensor data is stale, using WeatherAPI fallback
 
 ## 🔐 Security Best Practices
 
-- **API Keys**: Store in environment variables (see `QUICK_SETUP.md`)
-- **.gitignore**: Sensitive files excluded from version control
+- **API Keys**: Store in `.env` file (not committed to git)
+- **Environment Variables**: Use `python-dotenv` for configuration
 - **Virtual Environment**: Isolates dependencies
-- **No hardcoded secrets**: Use `.env` files (not committed)
+- **No hardcoded secrets**: All sensitive data in `.env`
 
 ## 🌐 Environment Variables
 
-Create a `.env` file (not committed to git):
-```
-GEMINI_API_KEY=your_api_key_here
-SERIAL_PORT=/dev/ttyUSB0  # Linux/Mac or COM3 for Windows
+Create a `.env` file in the project root:
+
+```env
+# WeatherAPI Configuration
+WEATHERAPI_KEY=your_weatherapi_key_here
+CITY_NAME=New Town, West Bengal
+
+# API Configuration
+API_BASE=http://localhost:8000
+
+# Serial Port (optional, for IoT sensor)
+SERIAL_PORT=/dev/ttyUSB0  # Linux/Mac
+# SERIAL_PORT=COM3  # Windows
 SERIAL_BAUD=9600
+
+# Gemini API (optional, for AI forecasting)
+GEMINI_API_KEY=your_gemini_key_here
 ```
 
 ## 🐛 Troubleshooting
@@ -146,57 +298,84 @@ SERIAL_BAUD=9600
 ### Virtual environment not activating
 ```bash
 python3 -m venv venv --clear
+source venv/bin/activate
 ```
 
 ### Serial port not found
-- Check Arduino connection: `ls /dev/tty*` (Linux/Mac)
-- Check Device Manager (Windows)
+- **Linux/Mac**: Check with `ls /dev/tty*`
+- **Windows**: Check Device Manager
 - Update `SERIAL_PORT` in `.env`
 
-### Streamlit not starting
+### Dashboard not loading
 ```bash
-pip install --upgrade streamlit
+# Check if port 8000 is in use
+lsof -i :8000  # Linux/Mac
+netstat -ano | findstr :8000  # Windows
+
+# Try different port
+uvicorn main:app --port 8001
 ```
 
+### Charts not displaying data
+- Ensure database has data: `ls -lh weather_data.db`
+- Check if serial reader is running
+- Verify WeatherAPI key is valid
+
 ### Model training fails
-- Ensure `raw_data.csv` exists and has valid data
-- Check column names match the script expectations
+- Ensure database has sufficient data (at least 7 days)
+- Check for missing columns in readings table
 
-## 📈 Usage Workflow
+## 📈 API Endpoints
 
-1. **Data Collection**: `serial_reader.py` reads sensor data continuously
-2. **Data Processing**: `data_handler.py` cleans and prepares data
-3. **Model Training**: `train_ml_model.py` trains on collected data
-4. **Forecasting**: `gemini_forecast.py` generates AI predictions
-5. **Dashboard**: `main.py` visualizes everything in Streamlit
+### Weather Data
+- `GET /api/combined` - Combined IoT + WeatherAPI + ML data
+- `GET /api/latest_sensor` - Latest IoT sensor reading
+- `GET /api/weatherapi/now` - Current weather from API
+- `GET /api/weatherapi/7day` - 7-day forecast from API
+
+### ML & Forecasting
+- `GET /api/ml_forecast` - ML temperature predictions (7 days)
+- `GET /api/gemini_forecast` - Gemini AI forecast
+
+### Actions
+- `GET /api/weatherapi/sync` - Fetch and store WeatherAPI forecast
 
 ## 🔄 Continuous Operation
 
-The system is designed to run continuously:
-- Sensor reader collects data 24/7
-- Model retrains periodically (can be scheduled)
-- Dashboard always available for monitoring
-- Forecasts updated in real-time
+The system is designed to run 24/7:
+- **Serial reader**: Collects sensor data continuously
+- **Database**: Stores all readings with timestamps
+- **Dashboard**: Always available at `http://localhost:8000`
+- **Auto-refresh**: Dashboard updates every 30 seconds
+- **Fallback**: Automatic switch to WeatherAPI if sensor fails
 
-## 📝 Contributing
+## 📝 Future Enhancements
 
-1. Create a feature branch
-2. Make your changes
-3. Test thoroughly
-4. Submit a pull request
+- [ ] Historical data page with date range selector
+- [ ] Weather alerts and notifications
+- [ ] Mobile-responsive design improvements
+- [ ] Export data to CSV
+- [ ] Multi-location support
+- [ ] WebSocket real-time updates
+- [ ] User authentication
+- [ ] Cloud deployment (Docker, Kubernetes)
 
 ## 📄 License
 
-[Add your license here]
+MIT License - See LICENSE file for details
 
 ## 👤 Author
 
-FlareSome
+**FlareSome**
 
 ## 📞 Support
 
-For issues or questions, open an issue on GitHub.
+For issues or questions:
+- Open an issue on GitHub
+- Check troubleshooting section above
+- Review logs in `logs/` directory
 
 ---
 
 **Last Updated**: November 2025
+**Version**: 2.0.0

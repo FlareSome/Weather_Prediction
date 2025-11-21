@@ -131,11 +131,24 @@ dmypy.json
 .DS_Store
 Thumbs.db
 
-# Project specific
+# Project specific - ML Models
 ml_weather_model.pkl
 *.pkl
+
+# Project specific - Data Files
 raw_data.csv
 forecast_log.csv
+weather_data.db
+*.db
+*.db-journal
+
+# Project specific - Logs
+logs/*.log
+logs/*.txt
+
+# Project specific - Data directories
+data/*.csv
+data/*.json
 
 # OS files
 .DS_Store
@@ -153,3 +166,9 @@ ehthumbs.db
 
 # Node modules (if using npm)
 node_modules/
+
+# Test and diagnostic scripts
+check_*.py
+diagnose_*.py
+verify_*.py
+test_*.py

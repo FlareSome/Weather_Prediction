@@ -1,12 +1,21 @@
-pandas
-numpy
-scikit-learn
-joblib
-pyserial
-plotly
-adafruit-circuitpython-bmp280
-python-dotenv
-fastapi
-uvicorn[standard]
-nicegui
-requests
+# Data Science & ML
+pandas>=2.0.0
+numpy>=1.24.0
+scikit-learn>=1.3.0
+joblib>=1.3.0
+
+# Hardware & IoT
+pyserial>=3.5
+adafruit-circuitpython-bmp280>=3.4.0
+
+# Visualization
+plotly>=5.17.0
+
+# Web Framework & API
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+nicegui>=1.4.0
+
+# HTTP & Utilities
+requests>=2.31.0
+python-dotenv>=1.0.0

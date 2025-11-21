@@ -1,8 +1,8 @@
 @echo off
-REM Batch file to run Weather Prediction Pipeline on Windows
+REM Batch file to run Weather Prediction System on Windows
 
 echo.
-echo 🔧 Setting up environment...
+echo 🌤️  Weather Prediction System - Starting...
 echo.
 
 REM Check if venv exists, if not create it
@@ -16,31 +16,28 @@ echo ✅ Activating virtual environment...
 call venv\Scripts\activate.bat
 
 REM Install requirements
-echo 📥 Installing requirements...
+echo 📥 Installing/updating requirements...
 pip install -r requirements.txt --quiet
 
 echo.
-echo Starting Weather Prediction Pipeline...
+echo 🚀 Starting Weather Prediction System...
 echo.
 
-REM Run serial_reader.py
-echo 1️⃣  Starting serial_reader.py...
-start "" python serial_reader.py
+REM Start serial reader in background (optional - comment out if no IoT sensor)
+echo 1️⃣  Starting serial reader (IoT sensor)...
+start /B python serial\serial_reader.py
 timeout /t 2 /nobreak
 
-REM Run train_ml_model.py
-echo 2️⃣  Starting train_ml_model.py...
-start "" python train_ml_model.py
-timeout /t 2 /nobreak
+REM Start main application (FastAPI + NiceGUI)
+echo 2️⃣  Starting FastAPI + NiceGUI dashboard...
+echo.
+echo 📊 Dashboard will be available at: http://localhost:8000
+echo.
 
-REM Run streamlit app
-echo 3️⃣  Starting Streamlit app...
-start "" streamlit run main.py
+python main.py
 
 echo.
-echo ✅ All services started!
-echo Press Ctrl+C in any window to stop each service individually,
-echo or close all windows to stop everything...
+echo ✅ System stopped.
 echo.
 
 pause
