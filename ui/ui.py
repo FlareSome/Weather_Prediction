@@ -6,6 +6,8 @@ import os
 import sys
 from datetime import datetime
 import plotly.graph_objects as go
+import asyncio
+import time
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -14,7 +16,7 @@ from utils.theme_manager import ThemeManager
 # --- Configuration ---
 API_BASE = os.getenv("API_BASE", "http://localhost:8000")
 CITY = os.getenv("CITY_NAME", "New Town, West Bengal")
-REFRESH_SECONDS = 300  # Increased to 5 mins to be polite to APIs, but adjustable
+REFRESH_SECONDS = 2  # Fast refresh for sensor data (API is cached)
 
 # --- Styling Constants ---
 # Using Tailwind arbitrary values in code, but defining common colors here
@@ -64,6 +66,8 @@ def _get_weather_icon(cond):
     if "partly" in cond: return "🌤️", "text-yellow-100"
     if "cloud" in cond or "overcast" in cond: return "☁️", "text-gray-300"
     if "fog" in cond or "mist" in cond: return "🌫️", "text-gray-400"
+    if "wet" in cond: return "🌧️", "text-blue-400"
+    if "dry" in cond: return "☁️", "text-gray-200"
     return "🌡️", "text-blue-200"
 
 # --- CSS ---
@@ -84,6 +88,10 @@ body {
 
 .glass-header {
     backdrop-filter: blur(10px);
+    margin: 1rem;
+    border-radius: 1rem;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 /* Custom Scrollbar for horizontal lists */
@@ -92,6 +100,79 @@ body {
 }
 .hide-scroll::-webkit-scrollbar {
     border-radius: 10px;
+}
+
+/* Loading Screen Animations */
+.loading-screen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: #000000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    transition: opacity 0.8s ease-out, visibility 0.8s ease-out;
+}
+
+.loading-screen.hidden {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+}
+
+/* Custom Loader Animation */
+.loader {
+    width: 96px;
+    aspect-ratio: 1;
+    position: relative;
+    animation: l13-0 2s linear infinite;
+}
+
+.loader::before,
+.loader::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: radial-gradient(at 30% 30%, #0000, #000a) rgba(255, 255, 255, 0.3);
+    animation: l13-1 0.5s cubic-bezier(.5, -500, .5, 500) infinite;
+}
+
+.loader::after {
+    animation-delay: -0.15s;
+}
+
+@keyframes l13-0 { 
+    100% { transform: rotate(360deg); } 
+}
+
+@keyframes l13-1 { 
+    100% { transform: translate(0.5px); } 
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.7; transform: scale(1.05); }
+}
+
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(30px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.main-content {
+    opacity: 0;
+    animation: fadeInUp 1s ease-out 0.4s forwards;
 }
 """
 
@@ -108,29 +189,64 @@ def main_page():
         "temp": None, "cond": None, "icon": None, 
         "humidity": None, "wind": None, "updated": None,
         "feels": None, "pressure": None, "sunrise": None, "sunset": None, "rainfall": None,
+        "hero_pressure": None, # Separate key for Hero card pressure
+        # API specific state
+        "api_temp": None, "api_cond": None, "api_icon": None, "api_humidity": None, "api_wind": None, "api_pressure": None,
         "chart": None, "humidity_chart": None, "pressure_chart": None, "rainfall_chart": None,
         "forecast_container": None,
-        "iot_status": None # New state
+        "iot_status": None, # New state
+        "loading_screen": None, # Loading overlay
+        "main_content": None, # Main content container
+        "start_time": time.time() # For minimum loading duration
     }
 
-    # --- Header ---
-    with ui.header().classes('glass-header q-px-md h-16 flex items-center justify-between'):
+    # --- Loading Screen ---
+    with ui.element('div').classes('loading-screen') as loading_screen:
+        state['loading_screen'] = loading_screen
+        # Icon and text removed as requested, only loader remains
+        ui.element('div').classes('loader')
+
+    # --- Header (fades in with main content) ---
+    with ui.header().classes('glass-header q-px-md h-auto py-2 flex items-center justify-between main-content fixed top-0 z-50') as header:
+        # Left: City Name
         with ui.row().classes('items-center gap-2'):
-            ui.label('WeatherAI').classes('text-xl font-bold tracking-tight text-blue-400')
-            ui.label(f'• {CITY}').classes('text-sm text-slate-600 dark:text-slate-400 font-medium')
+            ui.icon('place', size='xs', color='blue-400')
+            ui.label(CITY).classes('text-xl text-slate-700 dark:text-slate-200 font-bold')
+
+        # Center: Title (Absolute)
+        ui.label('Weather Prediction Model').classes('absolute left-1/2 -translate-x-1/2 text-2xl font-bold tracking-tight text-blue-500 dark:text-blue-400 z-10 text-center whitespace-nowrap')
         
-        with ui.row().classes('items-center gap-3'):
+        # Right: Controls
+        with ui.row().classes('items-center gap-4'):
             # IoT Status
-            with ui.row().classes('items-center gap-1 mr-2'):
-                ui.icon('sensors', size='xs', color='slate-500')
-                state['iot_status'] = ui.label('Checking...').classes('text-xs font-bold text-slate-500')
+            with ui.row().classes('items-center gap-2 mr-2'):
+                ui.icon('sensors', size='sm', color='slate-500')
+                state['iot_status'] = ui.label('Checking...').classes('text-base font-bold text-slate-500')
 
             # Status indicator
-            state['updated'] = ui.label('Syncing...').classes('text-xs text-slate-600 dark:text-slate-500 mr-2')
+            state['updated'] = ui.label('Syncing...').classes('text-base text-slate-600 dark:text-slate-500 mr-2')
             
-            # Theme Toggle
-            with ui.button(icon='dark_mode', on_click=dark.toggle).props('flat round dense'):
+            # Theme Toggle with dynamic icon
+            def toggle_theme():
+                dark.toggle()
+                # Update icon based on new state
+                if dark.value:
+                    # Dark mode is ON, show sun (click to go light)
+                    theme_btn.props('icon=light_mode')
+                else:
+                    # Light mode is ON, show moon (click to go dark)
+                    theme_btn.props('icon=dark_mode')
+            
+            theme_btn = ui.button(icon='light_mode', on_click=toggle_theme).props('flat round dense')
+            state['theme_btn'] = theme_btn
+            with theme_btn:
                 ui.tooltip('Toggle Theme')
+            
+            # Set initial icon based on dark mode state
+            if dark.value:
+                theme_btn.props('icon=light_mode')
+            else:
+                theme_btn.props('icon=dark_mode')
             
             with ui.button(icon='refresh', on_click=lambda: refresh_weather()).props('flat round dense'):
                 ui.tooltip('Refresh Data')
@@ -138,40 +254,75 @@ def main_page():
             with ui.button(icon='auto_graph', on_click=lambda: ui.open(API_BASE + "/docs")).props('flat round dense'):
                 ui.tooltip('API Docs')
 
-    # --- Main Content ---
-    with ui.element('div').classes('w-full max-w-7xl mx-auto p-4 md:p-6 gap-6 flex flex-col'):
+    # --- Main Content (Dashboard) ---
+    with ui.element('div').classes('w-full max-w-7xl mx-auto p-4 md:p-6 gap-6 flex flex-col main-content mt-16') as main_content:
+        state['main_content'] = main_content
         
         # Top Row: Hero + Details
         with ui.row().classes('w-full gap-6 flex-nowrap flex-col md:flex-row'):
             
-            # 1. Hero Card (Current Weather) - with Rainfall
-            with ui.column().classes('glass-panel p-8 w-full md:w-5/12 justify-between relative overflow-hidden'):
+            # 1. Hero Card (Split View: Sensor vs API)
+            with ui.column().classes('glass-panel p-0 w-full md:w-7/12 justify-between relative overflow-hidden'):
                 # Background accent blob
                 ui.element('div').classes('absolute -top-10 -right-10 w-40 h-40 bg-blue-500 blur-[80px] opacity-20 rounded-full pointer-events-none')
                 
-                with ui.row().classes('w-full justify-between items-start'):
-                    with ui.column().classes('gap-0'):
-                        ui.label('Now').classes('text-xs uppercase tracking-widest text-slate-500 dark:text-slate-400 font-bold')
-                        state['cond'] = ui.label('—').classes('text-2xl text-slate-700 dark:text-slate-200 mt-1 font-semibold')
-                    state['icon'] = ui.label('—').classes('text-6xl filter drop-shadow-lg')
-                
-                with ui.row().classes('items-baseline gap-1 mt-4'):
-                    state['temp'] = ui.label('—').classes('text-8xl font-thin tracking-tighter text-slate-900 dark:text-white leading-none')
+                with ui.row().classes('w-full h-full flex-nowrap'):
+                    # Left: Local Sensor
+                    with ui.column().classes('w-1/2 p-6 border-r border-slate-200 dark:border-white/10 justify-between'):
+                        with ui.column().classes('gap-0'):
+                            ui.label('Local Sensor').classes('text-xs uppercase tracking-widest text-blue-500 dark:text-blue-400 font-bold')
+                            state['cond'] = ui.label('—').classes('text-lg text-slate-700 dark:text-slate-200 mt-1 font-semibold leading-tight')
+                        
+                        state['icon'] = ui.label('—').classes('text-5xl filter drop-shadow-lg my-2')
+                        
+                        state['temp'] = ui.label('—').classes('text-6xl font-thin tracking-tighter text-slate-900 dark:text-white leading-none')
+                        
+                        with ui.column().classes('gap-2 mt-4 w-full'):
+                            with ui.row().classes('items-center justify-between w-full'):
+                                with ui.row().classes('items-center gap-2'):
+                                    ui.label('💧').classes('text-lg')
+                                    ui.label('Humidity').classes('text-sm font-medium text-slate-500 dark:text-slate-400')
+                                state['humidity'] = ui.label('—%').classes('text-lg font-bold text-slate-700 dark:text-slate-200')
+                            with ui.row().classes('items-center justify-between w-full'):
+                                with ui.row().classes('items-center gap-2'):
+                                    ui.label('⏱️').classes('text-lg')
+                                    ui.label('Pressure').classes('text-sm font-medium text-slate-500 dark:text-slate-400')
+                                state['hero_pressure'] = ui.label('— hPa').classes('text-lg font-bold text-slate-700 dark:text-slate-200')
+                            with ui.row().classes('items-center justify-between w-full'):
+                                with ui.row().classes('items-center gap-2'):
+                                    ui.label('🌧️').classes('text-lg')
+                                    ui.label('Rain').classes('text-sm font-medium text-slate-500 dark:text-slate-400')
+                                state['rainfall'] = ui.label('— mm').classes('text-lg font-bold text-slate-700 dark:text-slate-200')
 
-                # Bottom row: Rainfall, Humidity, Wind (all in one row)
-                with ui.row().classes('w-full justify-between mt-6 pt-6 border-t border-slate-200 dark:border-white/10'):
-                    with ui.row().classes('items-center gap-1'):
-                        ui.label('🌧️').classes('text-base')
-                        state['rainfall'] = ui.label('Rain: — mm').classes('text-base text-slate-600 dark:text-slate-300 font-medium')
-                    with ui.row().classes('items-center gap-1'):
-                        ui.label('💧').classes('text-base')
-                        state['humidity'] = ui.label('Humidity: —%').classes('text-base text-slate-600 dark:text-slate-300 font-medium')
-                    with ui.row().classes('items-center gap-1'):
-                        ui.label('💨').classes('text-base')
-                        state['wind'] = ui.label('Wind: — kph').classes('text-base text-slate-600 dark:text-slate-300 font-medium')
+                    # Right: Weather API
+                    with ui.column().classes('w-1/2 p-6 justify-between'):
+                        with ui.column().classes('gap-0'):
+                            ui.label('Weather API').classes('text-xs uppercase tracking-widest text-purple-500 dark:text-purple-400 font-bold')
+                            state['api_cond'] = ui.label('—').classes('text-lg text-slate-700 dark:text-slate-200 mt-1 font-semibold leading-tight')
+                        
+                        state['api_icon'] = ui.label('—').classes('text-5xl filter drop-shadow-lg my-2')
+                        
+                        state['api_temp'] = ui.label('—').classes('text-6xl font-thin tracking-tighter text-slate-900 dark:text-white leading-none')
+                        
+                        with ui.column().classes('gap-2 mt-4 w-full'):
+                            with ui.row().classes('items-center justify-between w-full'):
+                                with ui.row().classes('items-center gap-2'):
+                                    ui.label('💧').classes('text-lg')
+                                    ui.label('Humidity').classes('text-sm font-medium text-slate-500 dark:text-slate-400')
+                                state['api_humidity'] = ui.label('—%').classes('text-lg font-bold text-slate-700 dark:text-slate-200')
+                            with ui.row().classes('items-center justify-between w-full'):
+                                with ui.row().classes('items-center gap-2'):
+                                    ui.label('⏱️').classes('text-lg')
+                                    ui.label('Pressure').classes('text-sm font-medium text-slate-500 dark:text-slate-400')
+                                state['api_pressure'] = ui.label('— hPa').classes('text-lg font-bold text-slate-700 dark:text-slate-200')
+                            with ui.row().classes('items-center justify-between w-full'):
+                                with ui.row().classes('items-center gap-2'):
+                                    ui.label('💨').classes('text-lg')
+                                    ui.label('Wind').classes('text-sm font-medium text-slate-500 dark:text-slate-400')
+                                state['api_wind'] = ui.label('— kph').classes('text-lg font-bold text-slate-700 dark:text-slate-200')
 
             # 2. Details Grid (2x2)
-            with ui.column().classes('w-full md:w-7/12 gap-4'):
+            with ui.column().classes('w-full md:w-5/12 gap-4'):
                 # Stats Grid - 2 columns, 2 rows
                 with ui.grid().classes('w-full grid-cols-2 gap-4 h-full'):
                     
@@ -218,8 +369,8 @@ def main_page():
             # Forecast grid (centered)
             state['forecast_container'] = ui.row().classes('w-full flex-wrap gap-4 justify-center')
 
-        # Charts Section - 2x2 Grid (Larger)
-        with ui.grid().classes('w-full grid-cols-1 md:grid-cols-2 gap-4'):
+        # Charts Section - 4x1 Vertical Stack (Larger)
+        with ui.grid().classes('w-full grid-cols-1 gap-6'):
             # Temperature Trend Chart
             with ui.card().classes('glass-panel w-full p-1 no-shadow border-none'):
                 with ui.row().classes('w-full px-6 py-4 justify-between items-center'):
@@ -247,12 +398,33 @@ def main_page():
 
 
     # --- Logic: Refresh Function ---
-    def refresh_weather():
+    async def refresh_weather():
         """Fetches data and updates all UI elements"""
         # Visual loading indication
         state['updated'].set_text('Updating...')
         
-        data = safe_get("/api/combined")
+        # Run blocking I/O in executor to avoid freezing UI during sleep
+        loop = asyncio.get_running_loop()
+        data = await loop.run_in_executor(None, lambda: safe_get("/api/combined"))
+        
+        # Always hide loading screen after first attempt (success or failure)
+        if state['loading_screen']:
+            # Ensure minimum 3s duration
+            elapsed = time.time() - state['start_time']
+            remaining = 3 - elapsed
+            if remaining > 0:
+                await asyncio.sleep(remaining)
+
+            try:
+                # Check if not already hidden
+                if 'hidden' not in str(state['loading_screen']._classes):
+                    state['loading_screen']._classes.append('hidden')
+                    state['loading_screen'].update()
+            except Exception as e:
+                print(f"[ui] Error hiding loading screen: {e}")
+            
+            # Clear reference so we don't delay subsequent refreshes
+            state['loading_screen'] = None
         
         if not data:
             state['updated'].set_text('Offline')
@@ -260,43 +432,78 @@ def main_page():
             return
 
         cur = data.get("current", {})
+        sensor = data.get("sensor_data") or {}
+        api = data.get("api_data") or {}
         
-        # 1. Update Hero
-        state['temp'].set_text(_format_temp(cur.get("temp")))
-        
-        cond_text = cur.get("condition") or cur.get("cond") or "—"
-        state['cond'].set_text(cond_text)
-        
-        emoji, color_cls = _get_weather_icon(cond_text)
-        state['icon'].set_text(emoji)
-        
-        # Update icon classes safely
-        # state['icon'].classes is a list, so we modify it in place
-        new_classes = f"text-6xl filter drop-shadow-lg {color_cls}".split()
-        try:
-            state['icon'].classes.clear()
-            state['icon'].classes.extend(new_classes)
-        except Exception:
-            # Fallback if classes is not a list (e.g. older nicegui)
-            state['icon']._classes = new_classes
+        # 1. Update Hero - Local Sensor
+        if sensor:
+            state['temp'].set_text(_format_temp(sensor.get("temp")))
+            cond_text = sensor.get("condition") or "—"
+            state['cond'].set_text(cond_text)
             
-        state['icon'].update()
+            emoji, color_cls = _get_weather_icon(cond_text)
+            state['icon'].set_text(emoji)
+            
+            # Update icon classes
+            new_classes = f"text-5xl filter drop-shadow-lg my-2 {color_cls}".split()
+            try:
+                state['icon'].classes.clear()
+                state['icon'].classes.extend(new_classes)
+            except:
+                state['icon']._classes = new_classes
+            state['icon'].update()
 
-        hum = cur.get("humidity")
-        state['humidity'].set_text(f"Humidity: {hum}%" if hum else "Humidity: —%")
+            hum = sensor.get("humidity")
+            state['humidity'].set_text(f"{hum}%" if hum is not None else "—%")
+            
+            pres = sensor.get("pressure")
+            pres_text = f"{pres} hPa" if pres is not None else "— hPa"
+            state['hero_pressure'].set_text(pres_text)
+            state['pressure'].set_text(pres_text) # Update detail card too
+            
+            rain = sensor.get("rainfall")
+            state['rainfall'].set_text(f"{rain:.1f} mm" if rain is not None else "— mm")
+        else:
+            state['temp'].set_text("—")
+            state['cond'].set_text("No Sensor")
+            state['icon'].set_text("📡")
+            state['humidity'].set_text("—%")
+            state['hero_pressure'].set_text("— hPa")
+            state['pressure'].set_text("— hPa")
+            state['rainfall'].set_text("— mm")
+
+        # 1b. Update Hero - Weather API
+        state['api_temp'].set_text(_format_temp(api.get("temp")))
+        cond_api_text = api.get("condition") or "—"
+        state['api_cond'].set_text(cond_api_text)
         
-        wind = cur.get("wind")
-        state['wind'].set_text(f"Wind: {wind} kph" if wind else "Wind: — kph")
+        emoji_api, color_cls_api = _get_weather_icon(cond_api_text)
+        state['api_icon'].set_text(emoji_api)
+        
+        # Update API icon classes
+        new_classes_api = f"text-5xl filter drop-shadow-lg my-2 {color_cls_api}".split()
+        try:
+            state['api_icon'].classes.clear()
+            state['api_icon'].classes.extend(new_classes_api)
+        except:
+            state['api_icon']._classes = new_classes_api
+        state['api_icon'].update()
+        
+        hum_api = api.get("humidity")
+        state['api_humidity'].set_text(f"{hum_api}%" if hum_api is not None else "—%")
+        
+        pres_api = api.get("pressure")
+        state['api_pressure'].set_text(f"{pres_api} hPa" if pres_api else "— hPa")
+        
+        wind_api = api.get("wind")
+        state['api_wind'].set_text(f"{wind_api} kph" if wind_api else "— kph")
+
         state['updated'].set_text(f"Updated: {datetime.now().strftime('%H:%M')}")
 
-        # 2. Update Details
-        state['feels'].set_text(_format_temp(cur.get("feels_like")))
-        pres = cur.get("pressure")
-        state['pressure'].set_text(f"{pres} hPa" if pres else "—")
-        rain = cur.get("rainfall")
-        state['rainfall'].set_text(f"Rain: {rain:.1f} mm" if rain is not None else "Rain: — mm")
-        state['sunrise'].set_text(_format_time(cur.get("sunrise")))
-        state['sunset'].set_text(_format_time(cur.get("sunset")))
+        # 2. Update Details (Use API data for these as sensor might not have them)
+        state['feels'].set_text(_format_temp(api.get("feels_like")))
+        state['sunrise'].set_text(_format_time(api.get("sunrise")))
+        state['sunset'].set_text(_format_time(api.get("sunset")))
 
         # 3. Update Charts
         update_chart(data)
@@ -313,7 +520,7 @@ def main_page():
         state['iot_status'].set_text(iot_stat)
         # Update color based on status
         # We use the same list modification fix as before
-        new_classes = ["text-xs", "font-bold"]
+        new_classes = ["text-base", "font-bold"]
         if iot_stat == "Connected":
             new_classes.append("text-green-400")
         elif iot_stat == "Disconnected":

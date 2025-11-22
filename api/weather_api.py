@@ -8,17 +8,27 @@ load_dotenv()
 router = APIRouter()
 API_KEY = os.getenv("WEATHER_API_KEY")
 
+# Simple in-memory cache
+_cache_now = {"data": None, "timestamp": 0}
+_cache_7day = {"data": None, "timestamp": 0}
+CACHE_DURATION = 300  # 5 minutes
+
 def get_weatherapi_now(city="Kolkata"):
-    """Fetch current weather from WeatherAPI."""
+    """Fetch current weather from WeatherAPI (cached)."""
     if not API_KEY:
         return None
+
+    import time
+    now = time.time()
+    if _cache_now["data"] and (now - _cache_now["timestamp"] < CACHE_DURATION):
+        return _cache_now["data"]
 
     try:
         url = f"http://api.weatherapi.com/v1/current.json?key={API_KEY}&q={city}&aqi=no"
         r = requests.get(url, timeout=10).json()
         c = r["current"]
 
-        return {
+        data = {
             "current": {
                 "temperature_c": c["temp_c"],
                 "humidity": c["humidity"],
@@ -29,20 +39,28 @@ def get_weatherapi_now(city="Kolkata"):
                 "rainfall_mm": c.get("precip_mm", 0)
             }
         }
+        _cache_now["data"] = data
+        _cache_now["timestamp"] = now
+        return data
     except Exception as e:
         print("WeatherAPI current error:", e)
-        return None
+        return _cache_now["data"] # Return stale data if fetch fails
 
 def get_weatherapi_7day(city="Kolkata"):
-    """7-day forecast."""
+    """7-day forecast (cached)."""
     if not API_KEY:
         return None
+
+    import time
+    now = time.time()
+    if _cache_7day["data"] and (now - _cache_7day["timestamp"] < CACHE_DURATION):
+        return _cache_7day["data"]
 
     try:
         url = f"http://api.weatherapi.com/v1/forecast.json?key={API_KEY}&q={city}&days=7&aqi=no"
         r = requests.get(url, timeout=10).json()
 
-        return [
+        data = [
             {
                 "day": d["date"],
                 "temp_high_c": d["day"]["maxtemp_c"],
@@ -54,9 +72,12 @@ def get_weatherapi_7day(city="Kolkata"):
             }
             for d in r["forecast"]["forecastday"]
         ]
+        _cache_7day["data"] = data
+        _cache_7day["timestamp"] = now
+        return data
     except Exception as e:
         print("WeatherAPI 7day error:", e)
-        return None
+        return _cache_7day["data"]
 
 
 @router.get("/weatherapi")

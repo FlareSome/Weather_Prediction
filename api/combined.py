@@ -30,43 +30,47 @@ def combined_weather():
     w_now = get_weatherapi_now() or {}
     w_current_api = w_now.get("current", {})
 
+    # Prepare separate data objects
+    sensor_data = None
     if latest:
-        # From ESP32 sensor
-        # Fallback to API for wind if sensor doesn't have it
-        wind_val = latest.get("wind_speed_kph") or latest.get("wind_kph")
-        if wind_val is None:
-            wind_val = w_current_api.get("wind_kph")
-
-        current = {
+        sensor_data = {
             "temp": latest.get("temperature_c"),
-            "feels_like": latest.get("temperature_c"), # Sensor doesn't calculate feels_like, use temp
             "humidity": latest.get("humidity_perc"),
             "pressure": latest.get("pressure_hpa"),
-            "wind": wind_val,
             "rainfall": latest.get("rainfall_mm") or 0,
-            "condition": latest.get("status") or "Unknown", # Fix: status -> condition
-            "sunrise": today_astro.get("sunrise"),
-            "sunset": today_astro.get("sunset"),
+            "wind": latest.get("wind_speed_kph") or latest.get("wind_kph"), # Might be None
+            "condition": latest.get("status") or "Unknown",
+            "updated": latest.get("timestamp")
         }
-    else:
-        # Fallback to WeatherAPI
-        cond = w_current_api.get("condition")
-        if isinstance(cond, dict):
-            cond = cond.get("text")
-        if cond is None:
-            cond = "Unknown"
 
-        current = {
-            "temp": w_current_api.get("temperature_c") or w_current_api.get("temp_c"),
-            "feels_like": w_current_api.get("feelslike_c"),
-            "humidity": w_current_api.get("humidity"),
-            "pressure": w_current_api.get("pressure_hpa") or w_current_api.get("pressure_mb"),
-            "wind": w_current_api.get("wind_kph"),
-            "rainfall": w_current_api.get("precip_mm") or 0,
-            "condition": cond,
-            "sunrise": today_astro.get("sunrise"),
-            "sunset": today_astro.get("sunset"),
-        }
+    # Handle condition which can be a dict or string
+    cond_raw = w_current_api.get("condition")
+    if isinstance(cond_raw, dict):
+        cond_text = cond_raw.get("text", "Unknown")
+    else:
+        cond_text = cond_raw if cond_raw else "Unknown"
+
+    api_data = {
+        "temp": w_current_api.get("temperature_c") or w_current_api.get("temp_c"),
+        "feels_like": w_current_api.get("feelslike_c"),
+        "humidity": w_current_api.get("humidity"),
+        "pressure": w_current_api.get("pressure_hpa") or w_current_api.get("pressure_mb"),
+        "wind": w_current_api.get("wind_kph"),
+        "rainfall": w_current_api.get("precip_mm") or 0,
+        "condition": cond_text,
+        "sunrise": today_astro.get("sunrise"),
+        "sunset": today_astro.get("sunset"),
+    }
+    
+    # Keep 'current' for backward compatibility (prefer sensor if available)
+    current = sensor_data.copy() if sensor_data else api_data.copy()
+    
+    # Fill missing keys in current from api_data if using sensor_data
+    if sensor_data:
+        if not current.get("wind"): current["wind"] = api_data.get("wind")
+        if not current.get("sunrise"): current["sunrise"] = api_data.get("sunrise")
+        if not current.get("sunset"): current["sunset"] = api_data.get("sunset")
+        if not current.get("feels_like"): current["feels_like"] = current["temp"] # Sensor approx
 
     # ============================================================
     # 3. ML FORECAST (7-day prediction)
@@ -157,6 +161,8 @@ def combined_weather():
     # ============================================================
     return {
         "current": current,
+        "sensor_data": sensor_data,
+        "api_data": api_data,
         "daily": daily,
         "sensor_status": "Connected" if latest else "Disconnected",
         "chart": {

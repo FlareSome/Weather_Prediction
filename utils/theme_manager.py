@@ -15,7 +15,7 @@ class ThemeManager:
             --glass-bg: rgba(255, 255, 255, 0.4);
             --glass-border: rgba(0, 0, 0, 0.1);
             --glass-shadow: rgba(0, 0, 0, 0.05);
-            --header-bg: rgba(255, 255, 255, 0.8);
+            --header-bg: rgba(255, 255, 255, 0.3);
             --header-border: rgba(0, 0, 0, 0.05);
             --text-primary: #0f172a;
             --text-secondary: #64748b;
@@ -27,13 +27,13 @@ class ThemeManager:
         
         /* Dark Theme */
         body.body--dark {
-            --bg-gradient-start: #1e293b;
-            --bg-gradient-end: #0f172a;
-            --glass-bg: rgba(255, 255, 255, 0.05);
+            --bg-gradient-start: #000000;
+            --bg-gradient-end: #000000;
+            --glass-bg: rgba(20, 20, 20, 0.6);
             --glass-border: rgba(255, 255, 255, 0.1);
             --glass-shadow: rgba(0, 0, 0, 0.1);
-            --header-bg: rgba(15, 23, 42, 0.7);
-            --header-border: rgba(255, 255, 255, 0.05);
+            --header-bg: rgba(0, 0, 0, 0.3);
+            --header-border: rgba(255, 255, 255, 0.1);
             --text-primary: #f8fafc;
             --text-secondary: #cbd5e1;
             --text-muted: #94a3b8;

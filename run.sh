@@ -81,7 +81,7 @@ echo "Press CTRL+C to stop everything"
 echo ""
 
 # ------------------------------------------------------
-# 8) Handle shutdown
+# 9) Handle shutdown
 # ------------------------------------------------------
 trap "echo '🛑 Stopping services...'; kill $SERIAL_PID $API_PID $UI_PID; exit 0" SIGINT
 
