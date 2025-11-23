@@ -1,4 +1,4 @@
-[![Image Unavailable](aeroLogo.jpeg)]()
+[![Image Unavailable](aeroLogo.png)]()
 
 # AeroSync - Weather Prediction System 🌤️
 
